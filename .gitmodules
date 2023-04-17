@@ -1,0 +1,9 @@
+[submodule "external/cppfs"]
+	path = external/cppfs
+	url = https://github.com/gibme-c/cppfs.git
+[submodule "external/snappy"]
+	path = external/snappy
+	url = https://github.com/gibme-c/snappy.git
+[submodule "external/lmdb"]
+	path = external/lmdb
+	url = https://github.com/gibme-c/lmdb.git
