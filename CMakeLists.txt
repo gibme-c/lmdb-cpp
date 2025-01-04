@@ -146,7 +146,7 @@ else()
     endif()
 endif()
 
-add_subdirectory(${CMAKE_SOURCE_DIR}/external)
+add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/external)
 
 set(INCLUDE_DIRECTORIES
     ${CMAKE_CURRENT_SOURCE_DIR}/include
