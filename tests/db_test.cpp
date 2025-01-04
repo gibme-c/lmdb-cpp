@@ -82,7 +82,7 @@ int main()
             const auto temp = key + std::to_string(i);
             const auto temp2 = val + std::to_string(i);
 
-            db->put(temp, temp2);
+            db->put_key(temp, temp2);
         }
 
         std::cout << db->count() << std::endl;

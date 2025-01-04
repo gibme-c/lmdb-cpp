@@ -302,7 +302,7 @@ namespace LMDB
          * @param key
          * @return
          */
-        template<typename KeyType> Error del(const KeyType &key)
+        template<typename KeyType> Error del_key(const KeyType &key)
         {
             return del(key.data(), key.size());
         }
@@ -337,7 +337,7 @@ namespace LMDB
          * @param value
          * @return
          */
-        template<typename KeyType, typename ValueType> Error del(const KeyType &key, const ValueType &value)
+        template<typename KeyType, typename ValueType> Error del_key(const KeyType &key, const ValueType &value)
         {
             return del(key.data(), key.size(), value.data(), value.size());
         }
@@ -366,7 +366,7 @@ namespace LMDB
          * @param key
          * @return
          */
-        template<typename KeyType> bool exists(const KeyType &key)
+        template<typename KeyType> bool exists_key(const KeyType &key)
         {
             return exists(key.data(), key.size());
         }
@@ -391,7 +391,7 @@ namespace LMDB
          * @param key
          * @return
          */
-        template<typename KeyType> std::tuple<Error, mdb_result_t> get(const KeyType &key)
+        template<typename KeyType> std::tuple<Error, mdb_result_t> get_key(const KeyType &key)
         {
             return get(key.data(), key.size());
         }
@@ -449,7 +449,7 @@ namespace LMDB
          * @return
          */
         template<typename KeyType, typename ValueType>
-        Error put(const KeyType &key, const ValueType &value, int flags = 0)
+        Error put_key(const KeyType &key, const ValueType &value, int flags = 0)
         {
             return put(key.data(), key.size(), value.data(), value.size(), flags);
         }
@@ -542,7 +542,7 @@ namespace LMDB
          * @param key
          * @return
          */
-        template<typename KeyType> Error del(const KeyType &key)
+        template<typename KeyType> Error del_key(const KeyType &key)
         {
             return del(key.data(), key.size());
         }
@@ -575,7 +575,7 @@ namespace LMDB
          * @param value
          * @return
          */
-        template<typename KeyType, typename ValueType> Error del(const KeyType &key, const ValueType &value)
+        template<typename KeyType, typename ValueType> Error del_key(const KeyType &key, const ValueType &value)
         {
             return del(key.data(), key.size(), value.data(), value.size());
         }
@@ -596,7 +596,7 @@ namespace LMDB
          * @param key
          * @return
          */
-        template<typename KeyType> bool exists(const KeyType &key)
+        template<typename KeyType> bool exists_key(const KeyType &key)
         {
             return exists(key.data(), key.size());
         }
@@ -617,7 +617,7 @@ namespace LMDB
          * @param key
          * @return
          */
-        template<typename KeyType> std::tuple<Error, mdb_result_t> get(const KeyType &key)
+        template<typename KeyType> std::tuple<Error, mdb_result_t> get_key(const KeyType &key)
         {
             return get(key.data(), key.size());
         }
@@ -662,7 +662,7 @@ namespace LMDB
          * @return
          */
         template<typename KeyType, typename ValueType>
-        Error put(const KeyType &key, const ValueType &value, int flags = 0)
+        Error put_key(const KeyType &key, const ValueType &value, int flags = 0)
         {
             return put(key.data(), key.size(), value.data(), value.size(), flags);
         }
@@ -778,7 +778,7 @@ namespace LMDB
          * @return
          */
         template<typename KeyType>
-        std::tuple<Error, mdb_result_t, mdb_result_t> get(const KeyType &key, const MDB_cursor_op &op = MDB_SET)
+        std::tuple<Error, mdb_result_t, mdb_result_t> get_key(const KeyType &key, const MDB_cursor_op &op = MDB_SET)
         {
             return get(key.data(), key.size(), op);
         }
@@ -804,7 +804,7 @@ namespace LMDB
          * @return
          */
         template<typename KeyType>
-        std::tuple<Error, mdb_result_t, std::vector<mdb_result_t>> get_all(const KeyType &key)
+        std::tuple<Error, mdb_result_t, std::vector<mdb_result_t>> get_all_key(const KeyType &key)
         {
             return get_all(key.data(), key.size());
         }
@@ -842,7 +842,7 @@ namespace LMDB
          * @return
          */
         template<typename KeyType, typename ValueType>
-        Error put(const KeyType &key, const ValueType &value, int flags = 0)
+        Error put_key(const KeyType &key, const ValueType &value, int flags = 0)
         {
             return put(key.data(), key.size(), value.data(), value.size(), flags);
         }
