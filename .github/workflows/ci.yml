@@ -85,7 +85,7 @@ jobs:
           CXX: ${{ matrix.CXX }}
         run: |
           cd build
-          ${{ matrix.CMAKE_CMD }}
+          ${{ matrix.CMAKE_CMD }} -DBUILD_UNIT_TESTS=1
       - name: Build Project
         run: |
           cd build

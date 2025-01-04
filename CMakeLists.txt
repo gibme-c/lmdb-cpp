@@ -49,24 +49,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 ## We only build static binaries -- this is left here for our dependencies
 set(STATIC ON CACHE BOOL FORCE "Link libraries statically? Forced to ON")
 add_definitions(-DSTATICLIB)
-add_definitions(-DRAPIDJSON_HAS_STDSTRING)
-
-set(NO_AES OFF CACHE BOOL "Turn off Hardware AES instructions?")
-set(NO_OPTIMIZED_MULTIPLY_ON_ARM OFF CACHE BOOL "Turn off Optimized Multiplication on ARM?")
-
-if (NO_AES)
-    add_definitions(-DNO_AES)
-    message(STATUS "HW AES: DISABLED")
-else ()
-    message(STATUS "HW AES: ENABLED")
-endif ()
-
-if (NO_OPTIMIZED_MULTIPLY_ON_ARM)
-    add_definitions(-DNO_OPTIMIZED_MULTIPLY_ON_ARM)
-    message(STATUS "OPTIMIZED_ARM_MULTIPLICATION: DISABLED")
-else ()
-    message(STATUS "OPTIMIZED_ARM_MULTIPLICATION: ENABLED")
-endif ()
 
 option(STATIC_LIBC "Build with static libc" OFF)
 if(DEFINED ENV{STATIC_LIBC})
@@ -84,12 +66,6 @@ if(BUILD_UNIT_TESTS)
     message(STATUS "Tests added to targets list")
 endif()
 
-# We need to set the label and import it into CMake if it exists
-set(LABEL "")
-if (DEFINED ENV{LABEL})
-    set(LABEL $ENV{LABEL})
-    message(STATUS "Found LABEL: ${LABEL}")
-endif ()
 
 if(MSVC)
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /D_CRT_SECURE_NO_WARNINGS")
@@ -160,18 +136,19 @@ set(SOURCES
 )
 
 add_library(lmdbcpp-static STATIC ${SOURCES})
-target_link_libraries(lmdbcpp-static ThirdParty)
+target_link_libraries(lmdbcpp-static lmdbcpp-thirdparty)
 target_include_directories(lmdbcpp-static PUBLIC ${INCLUDE_DIRECTORIES})
 
 if(WIN32)
     target_link_libraries(lmdbcpp-static ws2_32 advapi32 crypt32 gdi32 user32)
 endif()
 
-set(TEST_SOURCES
-    tests/db_test.cpp
-)
+if(BUILD_UNIT_TESTS)
+    set(TEST_SOURCES
+        tests/db_test.cpp
+    )
 
-add_executable(dbtest ${TEST_SOURCES})
-target_link_libraries(dbtest lmdbcpp-static)
-set_property(TARGET dbtest PROPERTY OUTPUT_NAME "db_test")
-
+    add_executable(dbtest ${TEST_SOURCES})
+    target_link_libraries(dbtest lmdbcpp-static)
+    set_property(TARGET dbtest PROPERTY OUTPUT_NAME "db_test")
+endif()
