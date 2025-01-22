@@ -143,9 +143,9 @@ namespace LMDB
 
         env = nullptr;
 
-        if (Environment::environments.contains(path))
+        if (environments.contains(path))
         {
-            Environment::environments.erase(path);
+            environments.erase(path);
         }
     }
 
@@ -195,7 +195,7 @@ namespace LMDB
              * shared pointer to the instance so we do not have a bunch of copies of our env
              * running around
              */
-            auto _env = Environment::instance(path);
+            auto _env = instance(path);
 
             // we create the shared pointer this way as our constructor is private to avoid public calls to it
             std::shared_ptr<Database> db(new Database(_env, name, flags, enable_compression));
@@ -431,6 +431,13 @@ namespace LMDB
         {
             open_txns--;
         }
+    }
+
+    std::shared_ptr<Transaction> Environment::transaction(bool readonly) const
+    {
+        auto _env = instance(path);
+
+        return std::shared_ptr<Transaction>(new Transaction(_env, readonly));
     }
 
     std::tuple<int, int, int> Environment::version()
@@ -854,6 +861,12 @@ namespace LMDB
         return mdb_txn_reset(*txn);
     }
 
+    void Transaction::use(const std::shared_ptr<Database> &database)
+    {
+        db = database;
+    }
+
+
     void Transaction::txn_setup()
     {
         MDB_txn *result;
@@ -869,7 +882,10 @@ namespace LMDB
 
             if (mdb_result == MDB_MAP_RESIZED && i < 2)
             {
-                environment->detect_map_size();
+                if (const auto error = environment->detect_map_size())
+                {
+                    throw std::runtime_error("Failed to re-initialize map");
+                }
 
                 continue;
             }

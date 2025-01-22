@@ -202,6 +202,16 @@ namespace LMDB
         std::tuple<Error, MDB_stat> stats() const;
 
         /**
+         * Creates a new transaction within the environment
+         * before performing any operations using this transaction you must
+         * call the txn->use() method to supply a database
+         *
+         * @param readonly
+         * @return
+         */
+        std::shared_ptr<Transaction> transaction(bool readonly = false) const;
+
+        /**
          * Retrieves the current LMDB library version
          *
          * @return [major, minor, patch]
@@ -498,6 +508,8 @@ namespace LMDB
      */
     class Transaction
     {
+        friend class Environment;
+
         friend class Database;
 
         friend class Cursor;
@@ -685,6 +697,17 @@ namespace LMDB
          * Reset a read-only transaction.
          */
         void reset();
+
+        /**
+         * Changes the database that the transaction is referencing.
+         * This method allows for performing operations against multiple
+         * databases within the same transaction thereby permitting a singular
+         * commit() or abort() to be called at a later time
+         *
+         * @param database
+         * @return
+         */
+        void use(const std::shared_ptr<Database> &database);
 
       private:
         /**

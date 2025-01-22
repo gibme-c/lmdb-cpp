@@ -105,4 +105,54 @@ int main()
     }
 
     env->copy("test2.db");
+
+    std::cout << std::endl << std::endl;
+
+    {
+        const auto db1 = env->database("test3", true);
+
+        const auto db2 = env->database("test4", true);
+
+        const auto txn = env->transaction();
+
+        txn->use(db1);
+
+        if (const auto error = txn->put(key.data(), key.size(), val.data(), val.size())) {
+            std::cout << "Error putting into db1" << std::endl;
+
+            exit(1);
+        }
+
+        txn->use(db2);
+
+        if (const auto error = txn->put(key.data(), key.size(), val.data(), val.size()))
+        {
+            std::cout << "Error putting into db2" << std::endl;
+
+            exit(1);
+        }
+
+        if (const auto error = txn->commit())
+        {
+            std::cout << "Error committing transaction" << std::endl;
+
+            exit(1);
+        }
+
+        if (const auto [error, data] = db1->get(key.data(), key.size()); !error)
+        {
+            std::cout << "DB1 Value: " << std::string(data.begin(), data.end()) << std::endl;
+        } else
+        {
+            std::cout << "Error getting value" << std::endl;
+        }
+
+        if (const auto [error, data] = db2->get(key.data(), key.size()); !error)
+        {
+            std::cout << "DB2 Value: " << std::string(data.begin(), data.end()) << std::endl;
+        } else
+        {
+            std::cout << "Error getting value" << std::endl;
+        }
+    }
 }
