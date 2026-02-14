@@ -35,18 +35,6 @@
 #define MAKE_LMDB_ERROR(code) Error(code, __LINE__, __FILE__)
 #define MAKE_LMDB_ERROR_MSG(code, message) Error(code, message, __LINE__, __FILE__)
 #define LMDB_SPACE_MULTIPLIER (1024 * 1024) // to MB
-#define LMDB_CHECK_TXN_EXPAND(error, env, txn, label)     \
-    if (error == LMDB_MAP_FULL || error == LMDB_TXN_FULL) \
-    {                                                     \
-        txn->abort();                                     \
-                                                          \
-        const auto exp_error = env->expand();             \
-                                                          \
-        if (!exp_error)                                   \
-        {                                                 \
-            goto label;                                   \
-        }                                                 \
-    }
 #define LMDB_LOAD_VALUE(input, length, output, compressed)      \
     auto output##_temp = load_value(input, length, compressed); \
     auto output = load_val(output##_temp)
@@ -136,8 +124,8 @@ namespace LMDB
         // clear the list of databases, which will destruct them and close them
         databases.clear();
 
-        // flush the database to disk
-        flush(true);
+        // flush the database to disk (ignore error in destructor)
+        (void)flush(true);
 
         mdb_env_close(*env);
 
@@ -187,9 +175,9 @@ namespace LMDB
 
     std::shared_ptr<Database> Environment::database(const std::string &name, bool enable_compression, int flags)
     {
-        // if we haven't already opened this name database, we need to do so now
-        if (!databases.contains(name))
-        {
+        // Atomically check-and-insert to avoid TOCTOU race between contains() and insert().
+        // The factory is only called if the database doesn't already exist.
+        return databases.find_or_insert(name, [&]() -> std::shared_ptr<Database> {
             /**
              * We grab the Environment instance this way to make sure that we are using the
              * shared pointer to the instance so we do not have a bunch of copies of our env
@@ -198,12 +186,8 @@ namespace LMDB
             auto _env = instance(path);
 
             // we create the shared pointer this way as our constructor is private to avoid public calls to it
-            std::shared_ptr<Database> db(new Database(_env, name, flags, enable_compression));
-
-            databases.insert(name, db);
-        }
-
-        return databases.at(name);
+            return std::shared_ptr<Database>(new Database(_env, name, flags, enable_compression));
+        });
     }
 
     Error Environment::detect_map_size() const
@@ -454,7 +438,7 @@ namespace LMDB
         const std::string &name,
         int flags,
         bool enable_compression):
-        environment(environment), dbi(0), name(name), compression(enable_compression)
+        dbi(0), name(name), compression(enable_compression), environment(environment)
     {
         const auto [error, env_flags] = environment->get_flags();
 
@@ -488,11 +472,6 @@ namespace LMDB
         mdb_dbi_close(*environment->env, dbi);
 
         dbi = 0;
-
-        if (environment->databases.contains(name))
-        {
-            environment->databases.erase(name);
-        }
     }
 
     bool Database::compressed() const
@@ -525,65 +504,104 @@ namespace LMDB
 
     Error Database::del(const void *key, size_t length)
     {
-    try_again:
-        auto txn = transaction();
-
-        auto error = txn->del(key, length);
-
-        LMDB_CHECK_TXN_EXPAND(error, environment, txn, try_again)
-
-        if (error)
+        while (true)
         {
+            auto txn = transaction();
+
+            auto error = txn->del(key, length);
+
+            if (error == LMDB_MAP_FULL || error == LMDB_TXN_FULL)
+            {
+                txn->abort();
+
+                if (!environment->expand())
+                {
+                    continue;
+                }
+            }
+
+            if (error)
+            {
+                return error;
+            }
+
+            error = txn->commit();
+
+            if (error == LMDB_MAP_FULL || error == LMDB_TXN_FULL)
+            {
+                txn->abort();
+
+                if (!environment->expand())
+                {
+                    continue;
+                }
+            }
+
             return error;
         }
-
-        error = txn->commit();
-
-        LMDB_CHECK_TXN_EXPAND(error, environment, txn, try_again)
-
-        return error;
     }
 
     Error Database::del(const void *key, size_t key_length, const void *value, size_t value_length)
     {
-    try_again:
-        auto txn = transaction();
-
-        auto error = txn->del(key, key_length, value, value_length);
-
-        LMDB_CHECK_TXN_EXPAND(error, environment, txn, try_again)
-
-        if (error)
+        while (true)
         {
+            auto txn = transaction();
+
+            auto error = txn->del(key, key_length, value, value_length);
+
+            if (error == LMDB_MAP_FULL || error == LMDB_TXN_FULL)
+            {
+                txn->abort();
+
+                if (!environment->expand())
+                {
+                    continue;
+                }
+            }
+
+            if (error)
+            {
+                return error;
+            }
+
+            error = txn->commit();
+
+            if (error == LMDB_MAP_FULL || error == LMDB_TXN_FULL)
+            {
+                txn->abort();
+
+                if (!environment->expand())
+                {
+                    continue;
+                }
+            }
+
             return error;
         }
-
-        error = txn->commit();
-
-        LMDB_CHECK_TXN_EXPAND(error, environment, txn, try_again)
-
-        return error;
     }
 
     Error Database::drop(bool delete_db)
     {
         std::scoped_lock lock(mutex);
 
-    try_again:
-        std::unique_ptr<Transaction> txn(new Transaction(environment));
-
-        auto result = mdb_drop(*txn->txn, dbi, (delete_db) ? 1 : 0);
-
-        if (result == MDB_MAP_FULL)
+        while (true)
         {
-            txn->abort();
+            std::unique_ptr<Transaction> txn(new Transaction(environment));
 
-            environment->expand();
+            auto result = mdb_drop(*txn->txn, dbi, (delete_db) ? 1 : 0);
 
-            goto try_again;
+            if (result == MDB_MAP_FULL)
+            {
+                txn->abort();
+
+                if (!environment->expand())
+                {
+                    continue;
+                }
+            }
+
+            return txn->commit();
         }
-
-        return txn->commit();
     }
 
     bool Database::exists(const void *key, size_t length)
@@ -668,23 +686,41 @@ namespace LMDB
 
     Error Database::put(const void *key, size_t key_length, const void *value, size_t value_length, int flags)
     {
-    try_again:
-        auto txn = transaction();
-
-        auto error = txn->put(key, key_length, value, value_length, flags);
-
-        LMDB_CHECK_TXN_EXPAND(error, environment, txn, try_again)
-
-        if (error)
+        while (true)
         {
+            auto txn = transaction();
+
+            auto error = txn->put(key, key_length, value, value_length, flags);
+
+            if (error == LMDB_MAP_FULL || error == LMDB_TXN_FULL)
+            {
+                txn->abort();
+
+                if (!environment->expand())
+                {
+                    continue;
+                }
+            }
+
+            if (error)
+            {
+                return error;
+            }
+
+            error = txn->commit();
+
+            if (error == LMDB_MAP_FULL || error == LMDB_TXN_FULL)
+            {
+                txn->abort();
+
+                if (!environment->expand())
+                {
+                    continue;
+                }
+            }
+
             return error;
         }
-
-        error = txn->commit();
-
-        LMDB_CHECK_TXN_EXPAND(error, environment, txn, try_again)
-
-        return error;
     }
 
     std::shared_ptr<Transaction> Database::transaction(bool readonly)
@@ -902,7 +938,7 @@ namespace LMDB
     }
 
     Cursor::Cursor(std::shared_ptr<MDB_txn *> &txn, std::shared_ptr<Database> &db, bool readonly):
-        txn(txn), db(db), m_readonly(readonly)
+        db(db), txn(txn), m_readonly(readonly)
     {
         const auto result = mdb_cursor_open(*txn, db->dbi, &cursor);
 

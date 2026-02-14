@@ -38,9 +38,6 @@
 
 namespace LMDB
 {
-    /**
-     * Forward declarations
-     */
     class Environment;
 
     class Database;
@@ -49,12 +46,20 @@ namespace LMDB
 
     class Cursor;
 
-    // shorthand typedef
+    /// The standard value type -- just a byte vector. Every key and value you
+    /// read back from the database comes as one of these.
     typedef std::vector<unsigned char> mdb_result_t;
 
     /**
-     * Wraps the LMDB C API into an OOP model that allows for opening and using
-     * multiple environments and databases at once.
+     * The top-level entry point for working with LMDB.
+     *
+     * Each Environment maps to a single file (or directory) on disk and acts as
+     * a singleton: calling `Environment::instance("my.db")` twice gives you the
+     * same shared pointer both times. From here you open databases, create
+     * transactions, and manage the memory map.
+     *
+     *     auto env = LMDB::Environment::instance("my.db");
+     *     auto db  = env->database("users");
      */
     class Environment
     {
@@ -68,94 +73,70 @@ namespace LMDB
         ~Environment();
 
         /**
-         * Copies (creates a backup) the environment to the path specified.
-         * This method will overwrite the target path
+         * Creates a full backup of this environment at the given path.
          *
-         * Note: Compaction is available with the flag of MDB_CP_COMPACT
-         *
-         * @param path
-         * @param flags
-         * @return
+         * If the target already exists it will be overwritten. Pass
+         * MDB_CP_COMPACT as flags to compact the copy while you're at it.
          */
-        Error copy(const std::string &path, unsigned int flags = 0);
+        [[nodiscard]] Error copy(const std::string &path, unsigned int flags = 0);
 
         /**
-         * Opens a database (separate key space) in the environment as a logical
-         * partitioning of data.
+         * Opens (or returns an already-open) named database inside this
+         * environment. Each database is its own key space.
          *
-         * @param name
-         * @param enable_compression -- if enabled, VALUES will be compressed before writing into the database
-         * @param flags
-         * @return
+         * Set enable_compression to true if you want values Snappy-compressed
+         * before they hit disk. Compression is per-database and transparent --
+         * reads decompress automatically.
+         *
+         * @param name             logical name (empty string = the default DB)
+         * @param enable_compression  compress values with Snappy before writing
+         * @param flags            additional MDB_dbi flags
          */
         std::shared_ptr<Database>
             database(const std::string &name = "", bool enable_compression = false, int flags = 0);
 
         /**
-         * Detects the current memory map size if it has been changed elsewhere
-         * This requires that there are no open R/W transactions; otherwise, the method
-         * will throw an exception.
-         *
-         * @return
+         * Re-reads the memory map size from disk. Useful when another process
+         * has grown the map. Requires that no read/write transactions are open.
          */
-        Error detect_map_size() const;
+        [[nodiscard]] Error detect_map_size() const;
 
         /**
-         * Expands the memory map by the growth factor supplied to the constructor
-         * This requires that there are no open R/W transactions; otherwise, the method
-         * will throw an exception.
-         *
-         * @return
+         * Grows the memory map by the growth factor that was set when the
+         * environment was created. Requires no open read/write transactions.
          */
-        Error expand();
+        [[nodiscard]] Error expand();
 
         /**
-         * Expands the memory map by the number of pages specified.
-         * This requires that there are no open R/W transactions; otherwise, the method
-         * will throw an exception.
-         *
-         * @param pages
-         * @return
+         * Grows the memory map by a specific number of pages.
+         * Requires no open read/write transactions.
          */
-        Error expand(size_t pages);
+        [[nodiscard]] Error expand(size_t pages);
 
         /**
-         * Flush the data buffers to disk.
-         * Data is always written to disk when a transaction is committed, but the operating system may keep it
-         * buffered. LMDB always flushes the OS buffers upon commit as well, unless the environment was opened
-         * with MDB_NOSYNC or in part MDB_NOMETASYNC.
-         *
-         * This call is not valid if the environment was opened with MDB_RDONLY.
-         *
-         * @param force a synchronous flush of the buffers to disk
-         * @return
+         * Flushes OS-buffered data to disk. LMDB already flushes on every
+         * commit unless you opened with MDB_NOSYNC, so you usually don't need
+         * this. Set force=true for a synchronous flush.
          */
-        Error flush(bool force = false);
+        [[nodiscard]] Error flush(bool force = false);
+
+        /// Returns the environment's current flags (e.g. MDB_NOSUBDIR, MDB_RDONLY).
+        [[nodiscard]] std::tuple<Error, unsigned int> get_flags() const;
+
+        /// Returns low-level environment info (map size, last page, etc.).
+        [[nodiscard]] std::tuple<Error, MDB_envinfo> info() const;
 
         /**
-         * Retrieves the LMDB environment flags
+         * Opens (or returns the existing) LMDB environment at the given path.
          *
-         * @return
-         */
-        std::tuple<Error, unsigned int> get_flags() const;
-
-        /**
-         * Retrieves the LMDB environment information
+         * This is the main way you create an Environment. Calling it more than
+         * once with the same path gives you the same shared pointer back.
          *
-         * @return
-         */
-        std::tuple<Error, MDB_envinfo> info() const;
-
-        /**
-         * Opens a LMDB environment using the specified parameters
-         *
-         * @param path the file system path to the environment
-         * @param flags
-         * @param mode
-         * @param growth_factor the growth rate, in MB, of the environment. The initial environment size will be set
-         *   to this value in MB and each `expand()` call will result in the environment growing by this many MB
-         * @param max_databases
-         * @return
+         * @param path            filesystem path to the environment file/directory
+         * @param flags           MDB environment flags (default: MDB_NOSUBDIR)
+         * @param mode            UNIX file permissions for the environment file
+         * @param growth_factor   how many MB to grow the map each time expand() is called
+         * @param max_databases   how many named databases this environment can hold
          */
         static std::shared_ptr<Environment> instance(
             const std::string &path,
@@ -164,85 +145,42 @@ namespace LMDB
             size_t growth_factor = 8,
             unsigned int max_databases = 8);
 
-        /**
-         * Retrieves the maximum byte size of a key in the LMDB environment
-         *
-         * @return
-         */
-        std::tuple<Error, size_t> max_key_size() const;
+        /// Returns the maximum key size (in bytes) that this environment supports.
+        [[nodiscard]] std::tuple<Error, size_t> max_key_size() const;
 
-        /**
-         * Retrieves the maximum number of readers for the LMDB environment
-         *
-         * @return
-         */
-        std::tuple<Error, size_t> max_readers() const;
+        /// Returns the maximum number of reader slots for this environment.
+        [[nodiscard]] std::tuple<Error, size_t> max_readers() const;
 
-        /**
-         * Returns the number of open R/W transactions in the environment
-         *
-         * @return
-         */
+        /// Returns how many read/write transactions are currently open.
         size_t open_transactions() const;
 
-        /**
-         * Sets/changes the LMDB environment flags
-         *
-         * @param flags
-         * @param flag_state
-         * @return
-         */
-        Error set_flags(int flags, bool flag_state);
+        /// Changes the environment's flags at runtime.
+        [[nodiscard]] Error set_flags(int flags, bool flag_state);
+
+        /// Returns page-level statistics (page size, depth, entries, etc.).
+        [[nodiscard]] std::tuple<Error, MDB_stat> stats() const;
 
         /**
-         * Retrieves the LMDB environment statistics
+         * Creates a new transaction that isn't yet attached to any database.
+         * Call txn->use(db) before performing any operations.
          *
-         * @return
-         */
-        std::tuple<Error, MDB_stat> stats() const;
-
-        /**
-         * Creates a new transaction within the environment
-         * before performing any operations using this transaction you must
-         * call the txn->use() method to supply a database
+         * Prefer Database::transaction() when you're only working with a single
+         * database -- it sets things up for you.
          *
-         * @param readonly
-         * @return
+         * @param readonly  true for a read-only transaction
          */
         std::shared_ptr<Transaction> transaction(bool readonly = false) const;
 
-        /**
-         * Retrieves the current LMDB library version
-         *
-         * @return [major, minor, patch]
-         */
+        /// Returns the underlying LMDB library version as {major, minor, patch}.
         static std::tuple<int, int, int> version();
 
       private:
-        /**
-         * Creates a new instance of an environment
-         *
-         * @param env_path
-         * @param growth_factor
-         */
         Environment(std::string env_path, size_t growth_factor);
 
-        /**
-         * Converts the bytes of memory specified into LMDB pages (rounded up)
-         *
-         * @param memory
-         * @return
-         */
         std::tuple<Error, size_t> memory_to_pages(size_t memory) const;
 
-        /**
-         * Registers a new transaction in the environment
-         */
         void transaction_register();
 
-        /**
-         * Un-registers a transaction from the environment
-         */
         void transaction_unregister();
 
         std::shared_ptr<MDB_env *> env = std::make_shared<MDB_env *>();
@@ -259,7 +197,18 @@ namespace LMDB
     };
 
     /**
-     * Provides a Database model for use within an LMDB environment
+     * A named key-value store inside an Environment.
+     *
+     * You won't construct these directly -- use Environment::database() instead.
+     * Each Database is a singleton per name within its environment.
+     *
+     * For simple one-shot operations (put a value, get a value, delete a key),
+     * the convenience methods on this class handle the transaction for you and
+     * automatically retry when the map runs out of space.
+     *
+     *     auto db = env->database("users");
+     *     db->put_key(user_id, payload);
+     *     auto [err, data] = db->get_key(user_id);
      */
     class Database
     {
@@ -274,213 +223,102 @@ namespace LMDB
 
         ~Database();
 
-        /**
-         * Returns if the database keys and values are compressed
-         *
-         * @return
-         */
+        /// Returns true if this database was opened with Snappy compression enabled.
         bool compressed() const;
 
-        /**
-         * Returns how many key/value pairs currently exist in the database
-         *
-         * @return
-         */
+        /// Counts and returns the total number of key-value pairs in the database.
         size_t count();
 
         /**
-         * Simplified deletion of the given key and its value. Automatically opens a
-         * transaction, deletes the key, and commits the transaction, then returns.
-         *
-         * If we encounter MDB_MAP_FULL, we will automatically retry the transaction after
-         * attempting to expand the database
-         *
-         * @param key
-         * @param length
-         * @return
+         * Deletes the given key (and its value). Opens a transaction, deletes,
+         * and commits for you. Automatically retries after expanding the map if
+         * it fills up.
          */
-        Error del(const void *key, size_t length);
+        [[nodiscard]] Error del(const void *key, size_t length);
 
-        /**
-         * Simplified deletion of the given key and its value. Automatically opens a
-         * transaction, deletes the key, and commits the transaction, then returns.
-         *
-         * If we encounter MDB_MAP_FULL, we will automatically retry the transaction after
-         * attempting to expand the database
-         *
-         * @tparam KeyType
-         * @param key
-         * @return
-         */
-        template<typename KeyType> Error del_key(const KeyType &key)
+        /// Template convenience for del() -- works with std::string, std::vector, etc.
+        template<typename KeyType> [[nodiscard]] Error del_key(const KeyType &key)
         {
             return del(key.data(), key.size());
         }
 
         /**
-         * Simplified deletion of the given key with the given value. Automatically
-         * opens a transaction, deletes the value, and commits the transaction, then
-         * returns.
-         *
-         * If we encounter MDB_MAP_FULL, we will automatically retry the transaction after
-         * attempting to expand the database
-         *
-         * @param key
-         * @param key_length
-         * @param value
-         * @param value_length
-         * @return
+         * Deletes a specific key+value pair. Useful with MDB_DUPSORT databases
+         * where a single key can have multiple values.
          */
-        Error del(const void *key, size_t key_length, const void *value, size_t value_length);
+        [[nodiscard]] Error del(const void *key, size_t key_length, const void *value, size_t value_length);
 
-        /**
-         * Simplified deletion of the given key with the given value. Automatically
-         * opens a transaction, deletes the value, and commits the transaction, then
-         * returns.
-         *
-         * If we encounter MDB_MAP_FULL, we will automatically retry the transaction after
-         * attempting to expand the database
-         *
-         * @tparam KeyType
-         * @tparam ValueType
-         * @param key
-         * @param value
-         * @return
-         */
-        template<typename KeyType, typename ValueType> Error del_key(const KeyType &key, const ValueType &value)
+        /// Template convenience for the key+value delete.
+        template<typename KeyType, typename ValueType>
+        [[nodiscard]] Error del_key(const KeyType &key, const ValueType &value)
         {
             return del(key.data(), key.size(), value.data(), value.size());
         }
 
         /**
-         * Empties all of the key/value pairs from the database
-         *
-         * @param delete_db if specified, also deletes the database from the environment
-         * @return
+         * Empties out every key-value pair in the database. If delete_db is
+         * true, the database itself is also removed from the environment.
          */
-        Error drop(bool delete_db);
+        [[nodiscard]] Error drop(bool delete_db);
 
-        /**
-         * Returns if the key exists in the database
-         *
-         * @param key
-         * @param length
-         * @return
-         */
+        /// Returns true if the key exists in the database.
         bool exists(const void *key, size_t length);
 
-        /**
-         * Returns if the key exists in the database
-         *
-         * @tparam KeyType
-         * @param key
-         * @return
-         */
+        /// Template convenience for exists().
         template<typename KeyType> bool exists_key(const KeyType &key)
         {
             return exists(key.data(), key.size());
         }
 
         /**
-         * Simplified retrieval of the value at the specified key which opens a new
-         * readonly transaction, retrieves the value, and then returns it as the
-         * specified type
-         *
-         * @param key
-         * @param length
-         * @return
+         * Retrieves the value stored at the given key. Returns {error, data}
+         * where data is empty if the key wasn't found.
          */
-        std::tuple<Error, mdb_result_t> get(const void *key, size_t length);
+        [[nodiscard]] std::tuple<Error, mdb_result_t> get(const void *key, size_t length);
 
-        /**
-         * Simplified retrieval of the value at the specified key which opens a new
-         * readonly transaction, retrieves the value, and then returns it as the
-         * specified type
-         *
-         * @tparam KeyType
-         * @param key
-         * @return
-         */
-        template<typename KeyType> std::tuple<Error, mdb_result_t> get_key(const KeyType &key)
+        /// Template convenience for get().
+        template<typename KeyType> [[nodiscard]] std::tuple<Error, mdb_result_t> get_key(const KeyType &key)
         {
             return get(key.data(), key.size());
         }
 
         /**
-         * Simplifies retrieval of all values for all keys in the database
-         *
-         * WARNING: Very likely slow with large key sets
-         *
-         * @return
+         * Retrieves every value in the database. Heads up -- this scans the
+         * entire keyspace, so it will be slow on large databases.
          */
         std::vector<mdb_result_t> get_all();
 
-        /**
-         * Retrieves the database flags
-         *
-         * @return
-         */
-        std::tuple<Error, unsigned int> get_flags();
+        /// Returns the MDB_dbi flags for this database handle.
+        [[nodiscard]] std::tuple<Error, unsigned int> get_flags();
 
         /**
-         * Lists all keys in the database
-         *
-         * @param ignore_duplicates
-         * @return
+         * Returns all keys in the database. Duplicate keys are skipped by
+         * default (set ignore_duplicates=false to include them).
          */
         std::vector<mdb_result_t> list_keys(bool ignore_duplicates = true);
 
         /**
-         * Simplified put which opens a new transaction, puts the value, and then returns.
-         *
-         * If we encounter MDB_MAP_FULL, we will automatically retry the transaction after
-         * attempting to expand the database
-         *
-         * @param key
-         * @param key_length
-         * @param value
-         * @param value_length
-         * @param flags
-         * @return
+         * Stores a key-value pair. Opens a transaction, writes, and commits
+         * for you. Automatically retries after expanding the map if it fills up.
          */
-        Error put(const void *key, size_t key_length, const void *value, size_t value_length, int flags = 0);
+        [[nodiscard]] Error
+            put(const void *key, size_t key_length, const void *value, size_t value_length, int flags = 0);
 
-        /**
-         * Simplified put which opens a new transaction, puts the value, and then returns.
-         *
-         * If we encounter MDB_MAP_FULL, we will automatically retry the transaction after
-         * attempting to expand the database
-         *
-         * @tparam KeyType
-         * @tparam ValueType
-         * @param key
-         * @param value
-         * @param flags
-         * @return
-         */
+        /// Template convenience for put().
         template<typename KeyType, typename ValueType>
-        Error put_key(const KeyType &key, const ValueType &value, int flags = 0)
+        [[nodiscard]] Error put_key(const KeyType &key, const ValueType &value, int flags = 0)
         {
             return put(key.data(), key.size(), value.data(), value.size(), flags);
         }
 
         /**
-         * Opens a transaction in the database
+         * Opens a transaction scoped to this database.
          *
-         * @param readonly
-         * @return
+         * @param readonly  true for a read-only transaction
          */
         std::shared_ptr<Transaction> transaction(bool readonly = false);
 
       private:
-        /**
-         * Opens the database within the specified environment
-         *
-         * @param environment
-         * @param name
-         * @param flags
-         * @param enable_compression
-         */
         explicit Database(
             std::shared_ptr<Environment> &environment,
             const std::string &name = "",
@@ -499,12 +337,25 @@ namespace LMDB
     };
 
     /**
-     * Provides a transaction model for use within a LMDB database
+     * An RAII transaction wrapper.
      *
-     * Please note: A transaction will abort() automatically if it has not been committed before
-     * it leaves the scope it was created in. This helps to maintain database integrity as if
-     * your work in pushing to a transaction fails and throws, the transaction will always be
-     * reverted.
+     * If a Transaction goes out of scope without being committed, it
+     * automatically aborts -- so if your code throws or returns early, the
+     * database stays consistent.
+     *
+     * You can work across multiple databases in a single transaction by calling
+     * use() to switch which database operations target:
+     *
+     *     auto txn = env->transaction();
+     *     txn->use(db_users);
+     *     txn->put_key(user_id, user_data);
+     *     txn->use(db_sessions);
+     *     txn->put_key(session_id, session_data);
+     *     txn->commit();
+     *
+     * If you're using Transaction::put/del directly (not the Database
+     * convenience wrappers), you'll need to handle MDB_MAP_FULL yourself by
+     * aborting, expanding the environment, and retrying.
      */
     class Transaction
     {
@@ -519,220 +370,102 @@ namespace LMDB
 
         ~Transaction();
 
-        /**
-         * Aborts the currently open transaction
-         */
+        /// Aborts the transaction, discarding all changes made since it was opened.
         void abort();
 
-        /**
-         * Commits the currently open transaction
-         *
-         * @return
-         */
-        Error commit();
+        /// Commits all changes made in this transaction to disk.
+        [[nodiscard]] Error commit();
 
-        /**
-         * Opens a LMDB cursor within the transaction
-         *
-         * @return
-         */
+        /// Opens a cursor for iterating over key-value pairs within this transaction.
         std::shared_ptr<Cursor> cursor();
 
-        /**
-         * Deletes the provided key
-         *
-         * @param key
-         * @param length
-         * @return
-         */
-        Error del(const void *key, size_t length);
+        /// Deletes the given key from the current database.
+        [[nodiscard]] Error del(const void *key, size_t length);
 
-        /**
-         * Deletes the provided key
-         *
-         * @tparam KeyType
-         * @param key
-         * @return
-         */
-        template<typename KeyType> Error del_key(const KeyType &key)
+        /// Template convenience for del().
+        template<typename KeyType> [[nodiscard]] Error del_key(const KeyType &key)
         {
             return del(key.data(), key.size());
         }
 
         /**
-         * Deletes the provided key with the provided value.
-         *
-         * If the database supports sorted duplicates and the data parameter is NULL, all of the duplicate data items
-         * for the key will be deleted. Otherwise, if the data parameter is non-NULL only the matching data item will
-         * be deleted.
-         *
-         * @param key
-         * @param key_length
-         * @param value
-         * @param value_length
-         * @return
+         * Deletes a specific key+value pair. With MDB_DUPSORT databases, this
+         * removes only the matching value rather than all values for that key.
          */
-        Error del(const void *key, size_t key_length, const void *value, size_t value_length);
+        [[nodiscard]] Error del(const void *key, size_t key_length, const void *value, size_t value_length);
 
-        /**
-         * Deletes the provided key with the provided value.
-         *
-         * If the database supports sorted duplicates and the data parameter is NULL, all of the duplicate data items
-         * for the key will be deleted. Otherwise, if the data parameter is non-NULL only the matching data item will
-         * be deleted.
-         *
-         * @tparam KeyType
-         * @tparam ValueType
-         * @param key
-         * @param value
-         * @return
-         */
-        template<typename KeyType, typename ValueType> Error del_key(const KeyType &key, const ValueType &value)
+        /// Template convenience for the key+value delete.
+        template<typename KeyType, typename ValueType>
+        [[nodiscard]] Error del_key(const KeyType &key, const ValueType &value)
         {
             return del(key.data(), key.size(), value.data(), value.size());
         }
 
-        /**
-         * Checks if the given key exists in the database
-         *
-         * @param key
-         * @param length
-         * @return
-         */
+        /// Returns true if the given key exists in the current database.
         bool exists(const void *key, size_t length);
 
-        /**
-         * Checks if the given key exists in the database
-         *
-         * @tparam KeyType
-         * @param key
-         * @return
-         */
+        /// Template convenience for exists().
         template<typename KeyType> bool exists_key(const KeyType &key)
         {
             return exists(key.data(), key.size());
         }
 
-        /**
-         * Retrieves the value stored with the specified key
-         *
-         * @param key
-         * @param length
-         * @return
-         */
-        std::tuple<Error, mdb_result_t> get(const void *key, size_t length);
+        /// Retrieves the value stored at the given key. Returns {error, data}.
+        [[nodiscard]] std::tuple<Error, mdb_result_t> get(const void *key, size_t length);
 
-        /**
-         * Retrieves the value stored with the specified key
-         *
-         * @tparam KeyType
-         * @param key
-         * @return
-         */
-        template<typename KeyType> std::tuple<Error, mdb_result_t> get_key(const KeyType &key)
+        /// Template convenience for get().
+        template<typename KeyType> [[nodiscard]] std::tuple<Error, mdb_result_t> get_key(const KeyType &key)
         {
             return get(key.data(), key.size());
         }
 
         /**
-         * Returns the transaction ID
-         *
-         * If a 0 value is returned, the transaction is complete [abort() or commit() has been used]
-         *
-         * @return
+         * Returns this transaction's ID. A return value of 0 means the
+         * transaction has already been committed or aborted.
          */
         [[nodiscard]] std::tuple<Error, size_t> id() const;
 
         /**
-         * Puts the specified value with the specified key in the database using the specified flag(s)
+         * Stores a key-value pair in the current database.
          *
-         * Note: You must check for MDB_MAP_FULL or MDB_TXN_FULL response values and handle those
-         * yourself as you will very likely need to abort the current transaction and expand
-         * the LMDB environment before re-attempting the transaction.
-         *
-         * @param key
-         * @param key_length
-         * @param value
-         * @param value_length
-         * @param flags
-         * @return
+         * Unlike Database::put(), this does NOT auto-retry on MDB_MAP_FULL.
+         * You'll need to abort, call env->expand(), and retry yourself.
          */
-        Error put(const void *key, size_t key_length, const void *value, size_t value_length, int flags = 0);
+        [[nodiscard]] Error
+            put(const void *key, size_t key_length, const void *value, size_t value_length, int flags = 0);
 
-        /**
-         * Puts the specified value with the specified key in the database using the specified flag(s)
-         *
-         * Note: You must check for MDB_MAP_FULL or MDB_TXN_FULL response values and handle those
-         * yourself as you will very likely need to abort the current transaction and expand
-         * the LMDB environment before re-attempting the transaction.
-         *
-         * @tparam KeyType
-         * @tparam ValueType
-         * @param key
-         * @param value
-         * @param flags
-         * @return
-         */
+        /// Template convenience for put().
         template<typename KeyType, typename ValueType>
-        Error put_key(const KeyType &key, const ValueType &value, int flags = 0)
+        [[nodiscard]] Error put_key(const KeyType &key, const ValueType &value, int flags = 0)
         {
             return put(key.data(), key.size(), value.data(), value.size(), flags);
         }
 
-        /**
-         * Returns if the transaction is readonly or not
-         *
-         * @return
-         */
+        /// Returns true if this is a read-only transaction.
         [[nodiscard]] bool readonly() const;
 
-        /**
-         * Renew a read-only transaction that has been previously reset()
-         *
-         * @return
-         */
-        Error renew();
+        /// Renews a read-only transaction that was previously reset().
+        [[nodiscard]] Error renew();
 
-        /**
-         * Reset a read-only transaction.
-         */
+        /// Releases a read-only transaction's resources without destroying it.
+        /// Call renew() to reuse it later.
         void reset();
 
         /**
-         * Changes the database that the transaction is referencing.
-         * This method allows for performing operations against multiple
-         * databases within the same transaction thereby permitting a singular
-         * commit() or abort() to be called at a later time
-         *
-         * @param database
-         * @return
+         * Switches this transaction to target a different database. This is how
+         * you perform operations across multiple databases in a single
+         * atomic commit.
          */
         void use(const std::shared_ptr<Database> &database);
 
       private:
-        /**
-         * Constructs a new transaction in the environment specified
-         *
-         * @param environment
-         * @param readonly
-         */
         explicit Transaction(std::shared_ptr<Environment> &environment, bool readonly = false);
 
-        /**
-         * Constructs a new transaction in the environment and database specified
-         *
-         * @param environment
-         * @param database
-         * @param readonly
-         */
         Transaction(
             std::shared_ptr<Environment> &environment,
             std::shared_ptr<Database> &database,
             bool readonly = false);
 
-        /**
-         * Sets up the transaction via the multiple entry methods
-         */
         void txn_setup();
 
         std::shared_ptr<MDB_txn *> txn;
@@ -745,7 +478,15 @@ namespace LMDB
     };
 
     /**
-     * Provides a Cursor model for use within a LMDB transaction
+     * A positioned iterator over key-value pairs within a transaction.
+     *
+     * Cursors let you walk through the database in order, jump to a specific
+     * key, and read or write at the current position. Create one from a
+     * transaction:
+     *
+     *     auto txn    = db->transaction(true);
+     *     auto cursor = txn->cursor();
+     *     auto [err, key, value] = cursor->get(MDB_FIRST);
      */
     class Cursor
     {
@@ -758,140 +499,69 @@ namespace LMDB
 
         ~Cursor();
 
-        /**
-         * Return count of duplicates for current key.
-         *
-         * @return
-         */
-        std::tuple<Error, size_t> count();
+        /// Returns how many duplicate values exist for the key at the current position.
+        /// Only meaningful with MDB_DUPSORT databases.
+        [[nodiscard]] std::tuple<Error, size_t> count();
+
+        /// Deletes the key-value pair at the cursor's current position.
+        [[nodiscard]] Error del(int flags = 0);
 
         /**
-         * Delete current key/data pair.
-         *
-         * @param flags
-         * @return
+         * Moves the cursor according to the given operation (MDB_FIRST,
+         * MDB_NEXT, MDB_LAST, MDB_PREV, etc.) and returns the key-value pair
+         * at the new position.
          */
-        Error del(int flags = 0);
+        [[nodiscard]] std::tuple<Error, mdb_result_t, mdb_result_t> get(const MDB_cursor_op &op = MDB_FIRST);
 
-        /**
-         * Retrieve key/value pairs by cursor.
-         *
-         * @param op
-         * @return
-         */
-        std::tuple<Error, mdb_result_t, mdb_result_t> get(const MDB_cursor_op &op = MDB_FIRST);
-
-        /**
-         * Retrieve key/value pairs by cursor.
-         *
-         * @param key
-         * @param length
-         * @param op
-         * @return
-         */
-        std::tuple<Error, mdb_result_t, mdb_result_t>
+        /// Positions the cursor at the given key and returns the pair found there.
+        [[nodiscard]] std::tuple<Error, mdb_result_t, mdb_result_t>
             get(const void *key, size_t length, const MDB_cursor_op &op = MDB_SET);
 
-        /**
-         * Retrieve key/value pairs by cursor.
-         *
-         * @tparam KeyType
-         * @param key
-         * @param op
-         * @return
-         */
+        /// Template convenience for get-by-key.
         template<typename KeyType>
-        std::tuple<Error, mdb_result_t, mdb_result_t> get_key(const KeyType &key, const MDB_cursor_op &op = MDB_SET)
+        [[nodiscard]] std::tuple<Error, mdb_result_t, mdb_result_t>
+            get_key(const KeyType &key, const MDB_cursor_op &op = MDB_SET)
         {
             return get(key.data(), key.size(), op);
         }
 
         /**
-         * Retrieve multiple values for a single key from the database
-         *
-         * Requires that MDB_DUPSORT was used when opening the database
-         *
-         * @param key
-         * @param length
-         * @return
+         * Retrieves all duplicate values for a single key (MDB_DUPSORT
+         * databases). Returns the key plus a vector of all its values.
          */
-        std::tuple<Error, mdb_result_t, std::vector<mdb_result_t>> get_all(const void *key, size_t length);
+        [[nodiscard]] std::tuple<Error, mdb_result_t, std::vector<mdb_result_t>>
+            get_all(const void *key, size_t length);
 
-        /**
-         * Retrieve multiple values for a single key from the database
-         *
-         * Requires that MDB_DUPSORT was used when opening the database
-         *
-         * @tparam KeyType
-         * @param key
-         * @return
-         */
+        /// Template convenience for get_all().
         template<typename KeyType>
-        std::tuple<Error, mdb_result_t, std::vector<mdb_result_t>> get_all_key(const KeyType &key)
+        [[nodiscard]] std::tuple<Error, mdb_result_t, std::vector<mdb_result_t>> get_all_key(const KeyType &key)
         {
             return get_all(key.data(), key.size());
         }
 
         /**
-         * Puts the specified value with the specified key in the database using the specified flag(s)
-         * and places the cursor at the position of the new item or, near it upon failure.
+         * Writes a key-value pair and positions the cursor at the new entry.
          *
-         * Note: You must check for MDB_MAP_FULL or MDB_TXN_FULL response values and handle those
-         * yourself as you will very likely need to abort the current transaction and expand
-         * the LMDB environment before re-attempting the transaction.
-         *
-         * @param key
-         * @param key_length
-         * @param value
-         * @param value_length
-         * @param flags
-         * @return
+         * Like Transaction::put(), this does NOT auto-retry on MDB_MAP_FULL --
+         * you'll need to handle that yourself.
          */
-        Error put(const void *key, size_t key_length, const void *value, size_t value_length, int flags = 0);
+        [[nodiscard]] Error
+            put(const void *key, size_t key_length, const void *value, size_t value_length, int flags = 0);
 
-        /**
-         * Puts the specified value with the specified key in the database using the specified flag(s)
-         * and places the cursor at the position of the new item or, near it upon failure.
-         *
-         * Note: You must check for MDB_MAP_FULL or MDB_TXN_FULL response values and handle those
-         * yourself as you will very likely need to abort the current transaction and expand
-         * the LMDB environment before re-attempting the transaction.
-         *
-         * @tparam KeyType
-         * @tparam ValueType
-         * @param key
-         * @param value
-         * @param flags
-         * @return
-         */
+        /// Template convenience for put().
         template<typename KeyType, typename ValueType>
-        Error put_key(const KeyType &key, const ValueType &value, int flags = 0)
+        [[nodiscard]] Error put_key(const KeyType &key, const ValueType &value, int flags = 0)
         {
             return put(key.data(), key.size(), value.data(), value.size(), flags);
         }
 
-        /**
-         * Returns if the cursor is readonly
-         *
-         * @return
-         */
+        /// Returns true if this cursor belongs to a read-only transaction.
         [[nodiscard]] bool readonly() const;
 
-        /**
-         * Renews the cursor
-         *
-         * @return
-         */
-        Error renew();
+        /// Renews a cursor that was created in a renewed read-only transaction.
+        [[nodiscard]] Error renew();
 
       private:
-        /**
-         * Creates a new LMDB Cursor within the specified transaction and database
-         *
-         * @param txn
-         * @param db
-         * @param readonly
-         */
         Cursor(std::shared_ptr<MDB_txn *> &txn, std::shared_ptr<Database> &db, bool readonly = false);
 
         MDB_cursor *cursor = nullptr;

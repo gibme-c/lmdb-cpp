@@ -40,9 +40,9 @@ namespace LMDB
 
     Error::Error(const ErrorCode &code, std::string custom_message, size_t line_number, std::string file_name):
         m_error_code(code),
-        m_custom_error_message(std::move(custom_message)),
         m_line_number(line_number),
-        m_file_name(std::move(file_name))
+        m_file_name(std::move(file_name)),
+        m_custom_error_message(std::move(custom_message))
     {
     }
 
@@ -53,9 +53,9 @@ namespace LMDB
 
     Error::Error(const int &code, std::string custom_message, size_t line_number, std::string file_name):
         m_error_code(static_cast<ErrorCode>(code)),
-        m_custom_error_message(std::move(custom_message)),
         m_line_number(line_number),
-        m_file_name(std::move(file_name))
+        m_file_name(std::move(file_name)),
+        m_custom_error_message(std::move(custom_message))
     {
     }
 

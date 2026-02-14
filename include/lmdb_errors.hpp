@@ -31,15 +31,18 @@
 
 namespace LMDB
 {
+    /**
+     * Maps directly to LMDB's native error codes so you can match on them
+     * without pulling in lmdb.h yourself. Don't change the numeric values --
+     * they're the real MDB_* constants.
+     *
+     * See: http://www.lmdb.tech/doc/group__errors.html
+     */
     enum ErrorCode
     {
         SUCCESS = 0,
 
         LMDB_ENV_NOT_OPEN = -40001,
-        /**
-         * Do not change LMDB values as they map directly to LMDB return codes
-         * See: http://www.lmdb.tech/doc/group__errors.html
-         */
         LMDB_ERROR = -40000,
         LMDB_EMPTY = -39999,
         LMDB_KEYEXIST = -30799,
@@ -64,47 +67,33 @@ namespace LMDB
         LMDB_BAD_DBI = -30780
     };
 
+    /**
+     * A lightweight error type returned by most library methods.
+     *
+     * Converts to `true` when something went wrong and `false` on success, so
+     * you can write natural-looking checks:
+     *
+     *     if (auto err = db->put_key(k, v))
+     *         handle_error(err);
+     *
+     * Each Error also carries the source file and line where it was created,
+     * which makes debugging a lot easier when things go sideways.
+     */
     class Error
     {
       public:
         Error();
 
-        /**
-         * Creates an error with the specified code
-         *
-         * @param code
-         * @param line_number
-         * @param file_name
-         */
+        /// Creates an error from a known error code.
         Error(const ErrorCode &code, size_t line_number = 0, std::string file_name = "");
 
-        /**
-         * Creates an error with the specified code and a custom error message
-         *
-         * @param code
-         * @param custom_message
-         * @param line_number
-         * @param file_name
-         */
+        /// Creates an error from a known error code with a human-readable message.
         Error(const ErrorCode &code, std::string custom_message, size_t line_number = 0, std::string file_name = "");
 
-        /**
-         * Creates an error with the specified code
-         *
-         * @param code
-         * @param line_number
-         * @param file_name
-         */
+        /// Creates an error from a raw integer code (useful for forwarding MDB_* return values).
         Error(const int &code, size_t line_number = 0, std::string file_name = "");
 
-        /**
-         * Creates an error with the specified code and a custom error message
-         *
-         * @param code
-         * @param custom_message
-         * @param line_number
-         * @param file_name
-         */
+        /// Creates an error from a raw integer code with a human-readable message.
         Error(const int &code, std::string custom_message, size_t line_number = 0, std::string file_name = "");
 
         bool operator==(const ErrorCode &code) const;
@@ -115,34 +104,19 @@ namespace LMDB
 
         bool operator!=(const Error &error) const;
 
+        /// Returns true when the error represents a failure (anything other than SUCCESS).
         explicit operator bool() const;
 
-        /**
-         * Returns the error code
-         *
-         * @return
-         */
+        /// Returns the underlying error code.
         [[nodiscard]] ErrorCode code() const;
 
-        /**
-         * Return the filename of the file where the error was created
-         *
-         * @return
-         */
+        /// Returns the source filename where this error was created.
         [[nodiscard]] std::string file_name() const;
 
-        /**
-         * Return the line number of the file where the error was created
-         *
-         * @return
-         */
+        /// Returns the source line number where this error was created.
         [[nodiscard]] size_t line() const;
 
-        /**
-         * Returns the error message of the instance
-         *
-         * @return
-         */
+        /// Returns a human-readable description of what went wrong.
         [[nodiscard]] std::string to_string() const;
 
       private:

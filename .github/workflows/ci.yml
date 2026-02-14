@@ -85,19 +85,11 @@ jobs:
           CXX: ${{ matrix.CXX }}
         run: |
           cd build
-          ${{ matrix.CMAKE_CMD }} -DBUILD_UNIT_TESTS=1
+          ${{ matrix.CMAKE_CMD }} -DBUILD_TESTS=1
       - name: Build Project
         run: |
           cd build
           cmake --build . -j2
 
-      - name: Unit Tests (Linux & OSX)
-        if: matrix.os != 'windows-latest' || matrix.name == 'mingw-gcc'
-        run: |
-          cd build
-          ./db_test
-      - name: Unit Tests (Windows)
-        if: matrix.os == 'windows-latest' && matrix.name == 'msvc'
-        run: |
-          cd build/Debug
-          ./db_test.exe
+      - name: Unit Tests
+        run: ctest --test-dir build -C Debug --output-on-failure

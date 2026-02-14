@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.10)
 
 if(DEFINED CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE ${CMAKE_BUILD_TYPE} CACHE STRING "Choose the type of build, options are: Debug, Release, RelWithDebInfo")
@@ -16,13 +16,7 @@ set(LIB_MINOR_VERSION "0")
 set(LIB_PATCH_VERSION "0")
 set(LIB_VERSION_STRING "${LIB_MAJOR_VERSION}.${LIB_MINOR_VERSION}.${LIB_PATCH_VERSION}")
 
-if(CMAKE_VERSION VERSION_LESS 3.0)
-    project(lmdbcpp CXX)
-    enable_language(CXX)
-else()
-    cmake_policy(SET CMP0048 NEW)
-    project(lmdbcpp VERSION "${LIB_VERSION_STRING}" LANGUAGES CXX)
-endif()
+project(lmdbcpp VERSION "${LIB_VERSION_STRING}" LANGUAGES CXX)
 
 if(NOT MSVC)
     find_program(CCACHE_PROGRAM ccache)
@@ -37,7 +31,6 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 set(CMAKE_SKIP_INSTALL_RULES OFF FORCE)
 set(CMAKE_SKIP_PACKAGE_ALL_DEPENDENCY ON FORCE)
 set(CMAKE_SUPPRESS_REGENERATION ON)
-set(CMAKE_POLICY_WARNING_CMP0048 OFF)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR})
 
@@ -58,11 +51,11 @@ if(STATIC_LIBC)
     message(STATUS "Forcing build with statically linked libc, binaries may not be portable")
 endif()
 
-option(BUILD_UNIT_TESTS "Build included tests" OFF)
-if(DEFINED ENV{BUILD_UNIT_TESTS})
-    set(BUILD_UNIT_TESTS $ENV{BUILD_UNIT_TESTS})
+option(BUILD_TESTS "Build included tests" OFF)
+if(DEFINED ENV{BUILD_TESTS})
+    set(BUILD_TESTS $ENV{BUILD_TESTS})
 endif()
-if(BUILD_UNIT_TESTS)
+if(BUILD_TESTS)
     message(STATUS "Tests added to targets list")
 endif()
 
@@ -73,6 +66,10 @@ if(MSVC)
 
     set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /O2")
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2")
+
+    # Warning flags applied only to our targets (not externals)
+    set(LMDBCPP_COMPILE_OPTIONS /W4)
+    set(LMDBCPP_COMPILE_OPTIONS_RELEASE)
 else()
     if("${ARCH}" STREQUAL "default")
         set(ARCH_FLAG "")
@@ -89,14 +86,18 @@ else()
         set(MAES_FLAG "")
     endif ()
 
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c11 -Wuninitialized ${MAES_FLAG}")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -Wuninitialized ${MAES_FLAG}")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c11 ${MAES_FLAG}")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 ${MAES_FLAG}")
 
     set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -g3 -Og")
     set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g3 -Og")
 
     set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -DNDEBUG -O3")
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -DNDEBUG -O3")
+
+    # Warning and hardening flags applied only to our targets (not externals)
+    set(LMDBCPP_COMPILE_OPTIONS -Wall -Wextra -Wpedantic -Wuninitialized)
+    set(LMDBCPP_COMPILE_OPTIONS_RELEASE -fstack-protector-strong -D_FORTIFY_SOURCE=2)
 
     if(APPLE)
         if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
@@ -138,17 +139,24 @@ set(SOURCES
 add_library(lmdbcpp-static STATIC ${SOURCES})
 target_link_libraries(lmdbcpp-static lmdbcpp-thirdparty)
 target_include_directories(lmdbcpp-static PUBLIC ${INCLUDE_DIRECTORIES})
+target_compile_options(lmdbcpp-static PRIVATE ${LMDBCPP_COMPILE_OPTIONS})
+target_compile_options(lmdbcpp-static PRIVATE $<$<CONFIG:Release>:${LMDBCPP_COMPILE_OPTIONS_RELEASE}>)
 
 if(WIN32)
     target_link_libraries(lmdbcpp-static ws2_32 advapi32 crypt32 gdi32 user32)
 endif()
 
-if(BUILD_UNIT_TESTS)
+if(BUILD_TESTS)
+    enable_testing()
+
     set(TEST_SOURCES
         tests/db_test.cpp
     )
 
-    add_executable(dbtest ${TEST_SOURCES})
-    target_link_libraries(dbtest lmdbcpp-static)
-    set_property(TARGET dbtest PROPERTY OUTPUT_NAME "db_test")
+    add_executable(lmdb-tests ${TEST_SOURCES})
+    target_link_libraries(lmdb-tests lmdbcpp-static)
+    target_compile_options(lmdb-tests PRIVATE ${LMDBCPP_COMPILE_OPTIONS})
+    target_compile_options(lmdb-tests PRIVATE $<$<CONFIG:Release>:${LMDBCPP_COMPILE_OPTIONS_RELEASE}>)
+
+    add_test(NAME lmdb-tests COMMAND lmdb-tests)
 endif()

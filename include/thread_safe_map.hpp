@@ -34,17 +34,21 @@
 
 namespace LMDB
 {
+    /**
+     * A thin, reader-writer-locked wrapper around std::map.
+     *
+     * Read operations (at, contains, each, empty, size) take a shared lock so
+     * multiple readers can proceed concurrently. Write operations (insert,
+     * erase, clear, etc.) take an exclusive lock.
+     *
+     * Used internally to manage the Environment and Database registries.
+     */
     template<typename L, typename R> class ThreadSafeMap
     {
       public:
         ThreadSafeMap() = default;
 
-        /**
-         * Returns the element at the specified key in the container
-         *
-         * @param key
-         * @return
-         */
+        /// Returns the value for the given key. Throws std::out_of_range if absent.
         R at(L key) const
         {
             std::shared_lock lock(m_mutex);
@@ -52,9 +56,7 @@ namespace LMDB
             return m_container.at(key);
         }
 
-        /**
-         * Removes all elements from the container
-         */
+        /// Removes every element from the map.
         void clear()
         {
             std::unique_lock lock(m_mutex);
@@ -62,12 +64,7 @@ namespace LMDB
             m_container.clear();
         }
 
-        /**
-         * checks if the container contains element with specific key
-         *
-         * @param key
-         * @return
-         */
+        /// Returns true if the map contains an element with the given key.
         bool contains(const L &key) const
         {
             std::shared_lock lock(m_mutex);
@@ -75,12 +72,7 @@ namespace LMDB
             return m_container.count(key) != 0;
         }
 
-        /**
-         * loops over the the container and executes the provided function
-         * using each element
-         *
-         * @param func
-         */
+        /// Calls func(key, value) for each element (read-only, shared lock).
         void each(const std::function<void(const L &, const R &)> &func) const
         {
             std::shared_lock lock(m_mutex);
@@ -91,12 +83,7 @@ namespace LMDB
             }
         }
 
-        /**
-         * loops over the the container and executes the provided function
-         * using each element (without const)
-         *
-         * @param func
-         */
+        /// Calls func(key, value) for each element (mutable references, exclusive lock).
         void eachref(const std::function<void(L &, R &)> &func)
         {
             std::unique_lock lock(m_mutex);
@@ -107,11 +94,7 @@ namespace LMDB
             }
         }
 
-        /**
-         * Returns whether the container is empty
-         *
-         * @return
-         */
+        /// Returns true when the map has no elements.
         bool empty() const
         {
             std::shared_lock lock(m_mutex);
@@ -119,11 +102,7 @@ namespace LMDB
             return m_container.empty();
         }
 
-        /**
-         * erases elements
-         *
-         * @param key
-         */
+        /// Removes the element with the given key (no-op if absent).
         void erase(const L &key)
         {
             std::unique_lock lock(m_mutex);
@@ -132,11 +111,49 @@ namespace LMDB
         }
 
         /**
-         * inserts elements
-         *
-         * @param key
-         * @param value
+         * Atomically looks up a key and, if missing, inserts the provided value.
+         * Either way, returns the value now associated with that key.
          */
+        R find_or_insert(const L &key, const R &value)
+        {
+            std::unique_lock lock(m_mutex);
+
+            auto it = m_container.find(key);
+
+            if (it != m_container.end())
+            {
+                return it->second;
+            }
+
+            m_container.insert({key, value});
+
+            return value;
+        }
+
+        /**
+         * Same as find_or_insert, but accepts a factory function that's only
+         * called when the key is absent. Handy when constructing the value is
+         * expensive and you'd rather not do it unless you have to.
+         */
+        R find_or_insert(const L &key, const std::function<R()> &factory)
+        {
+            std::unique_lock lock(m_mutex);
+
+            auto it = m_container.find(key);
+
+            if (it != m_container.end())
+            {
+                return it->second;
+            }
+
+            auto value = factory();
+
+            m_container.insert({key, value});
+
+            return value;
+        }
+
+        /// Inserts a key-value pair. Does nothing if the key already exists.
         void insert(const L &key, const R &value)
         {
             std::unique_lock lock(m_mutex);
@@ -144,11 +161,7 @@ namespace LMDB
             m_container.insert({key, value});
         }
 
-        /**
-         * inserts elements
-         *
-         * @param kv
-         */
+        /// Inserts a key-value pair from a tuple. Does nothing if the key already exists.
         void insert(const std::tuple<L, R> &kv)
         {
             std::unique_lock lock(m_mutex);
@@ -156,12 +169,7 @@ namespace LMDB
             m_container.insert(kv);
         }
 
-        /**
-         * inserts an element or assigns to the current element if the key already exists
-         *
-         * @param key
-         * @param value
-         */
+        /// Inserts a key-value pair, or overwrites the existing value if the key is already present.
         void insert_or_assign(const L &key, const R &value)
         {
             std::unique_lock lock(m_mutex);
@@ -169,11 +177,7 @@ namespace LMDB
             m_container.insert_or_assign(key, value);
         }
 
-        /**
-         * inserts an element or assigns to the current element if the key already exists
-         *
-         * @param kv
-         */
+        /// Inserts or overwrites from a tuple.
         void insert_or_assign(const std::tuple<L, R> &kv)
         {
             std::unique_lock lock(m_mutex);
@@ -183,11 +187,7 @@ namespace LMDB
             m_container.insert_or_assign(key, value);
         }
 
-        /**
-         * Returns the maximum possible number of elements for the container
-         *
-         * @return
-         */
+        /// Returns the theoretical maximum number of elements the map can hold.
         size_t max_size() const
         {
             std::shared_lock lock(m_mutex);
@@ -195,11 +195,7 @@ namespace LMDB
             return m_container.max_size();
         }
 
-        /**
-         * Returns the size of the container
-         *
-         * @return
-         */
+        /// Returns how many elements are currently in the map.
         size_t size() const
         {
             std::shared_lock lock(m_mutex);
